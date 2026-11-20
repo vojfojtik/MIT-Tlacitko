@@ -1,0 +1,253 @@
+{
+  "name": "stm8-toolchain",
+  "displayName": "STM8 Toolchain Debugger",
+  "description": "Build, flash and debug STM8S microcontroller projects with SDCC, OpenOCD and stm8-gdb: create a project, press F5, step through code, inspect variables and peripheral registers.",
+  "version": "1.0.4",
+  "publisher": "spseol",
+  "license": "GPL-3.0-or-later",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spseol/STM8-toolchain.git"
+  },
+  "homepage": "https://github.com/spseol/STM8-toolchain#readme",
+  "bugs": {
+    "url": "https://github.com/spseol/STM8-toolchain/issues"
+  },
+  "keywords": [
+    "stm8",
+    "stm8s",
+    "sdcc",
+    "openocd",
+    "gdb",
+    "debugger",
+    "embedded",
+    "microcontroller",
+    "spl"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Education"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:.make/gdbinit",
+    "workspaceContains:.make/Makefile-sdcc",
+    "onDebugResolve:stm8"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "breakpoints": [
+      {
+        "language": "c"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "stm8",
+        "label": "STM8 (stm8-gdb + OpenOCD)",
+        "languages": [
+          "c"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "stm8",
+            "request": "launch",
+            "name": "STM8 debug",
+            "preLaunchTask": "stm8: build"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "STM8: debug",
+            "description": "Build, load into the chip and stop in main()",
+            "body": {
+              "type": "stm8",
+              "request": "launch",
+              "name": "STM8 debug",
+              "preLaunchTask": "stm8: build"
+            }
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "stm8"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "sdcc",
+        "owner": "sdcc",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(?:\\u001b\\[[0-9;]*m)*(.+?)(?:\\u001b\\[[0-9;]*m)*:(\\d+)(?:\\u001b\\[[0-9;]*m)*:\\s*(?:\\u001b\\[[0-9;]*m)*\\s*(warning|error)\\s+(\\d+):(?:\\u001b\\[[0-9;]*m)*\\s*(.*)$",
+          "file": 1,
+          "line": 2,
+          "severity": 3,
+          "code": 4,
+          "message": 5
+        }
+      }
+    ],
+    "configuration": {
+      "title": "STM8",
+      "properties": {
+        "stm8.toolchainUrl": {
+          "type": "string",
+          "default": "https://github.com/spseol/STM8-toolchain.git",
+          "scope": "machine",
+          "description": "Git repository that STM8: New Project clones the toolchain from and STM8: Update Toolchain downloads the current toolchain (.make/) from."
+        },
+        "stm8.checkToolchainUpdates": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "When a project is opened, compare the project's toolchain (.make/) with the installed extension: offer STM8: Update Toolchain when the project is older, tell you to update the extension when it is newer. STM8: Update Toolchain and make upgrade work either way."
+        },
+        "stm8.afterSuccess": {
+          "type": "string",
+          "enum": [
+            "hidePanel",
+            "editor",
+            "previousTerminal",
+            "stay"
+          ],
+          "enumDescriptions": [
+            "Close the panel and focus the editor.",
+            "Focus the editor, keep the panel open.",
+            "Show the terminal that was active before (otherwise focus the editor).",
+            "Keep the terminal in front (old behaviour)."
+          ],
+          "default": "hidePanel",
+          "description": "What Build and Flash in the status bar do when make ends with exit code 0. On an error the terminal always stays in front."
+        },
+        "stm8.projectsFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Folder where STM8: New Project creates your projects. Keep all projects in one folder: they share the SPL library in ../SPLSPL next to them."
+        }
+      }
+    },
+    "views": {
+      "debug": [
+        {
+          "id": "stm8Peripherals",
+          "name": "STM8 Peripherals",
+          "when": "debugType == 'stm8'"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "stm8.sfr.writeRegister",
+        "title": "STM8: Write Register…",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "stm8.sfr.editField",
+        "title": "STM8: Write Field…",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "stm8.sfr.readRegister",
+        "title": "STM8: Read Register",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "stm8.sfr.openRegister",
+        "title": "STM8: Open Register Detail",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "stm8.build",
+        "title": "STM8: Build"
+      },
+      {
+        "command": "stm8.flash",
+        "title": "STM8: Flash"
+      },
+      {
+        "command": "stm8.debug",
+        "title": "STM8: Debug"
+      },
+      {
+        "command": "stm8.pickChip",
+        "title": "STM8: Choose Chip…"
+      },
+      {
+        "command": "stm8.updateToolchain",
+        "title": "STM8: Update Toolchain"
+      },
+      {
+        "command": "stm8.newProject",
+        "title": "STM8: New Project…"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "stm8.sfr.writeRegister",
+          "when": "false"
+        },
+        {
+          "command": "stm8.sfr.editField",
+          "when": "false"
+        },
+        {
+          "command": "stm8.sfr.readRegister",
+          "when": "false"
+        },
+        {
+          "command": "stm8.sfr.openRegister",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "stm8.sfr.writeRegister",
+          "when": "view == stm8Peripherals && viewItem =~ /^stm8\\.reg(\\.sideEffect)?$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "stm8.sfr.readRegister",
+          "when": "view == stm8Peripherals && viewItem == stm8.reg.sideEffect",
+          "group": "inline@1"
+        },
+        {
+          "command": "stm8.sfr.editField",
+          "when": "view == stm8Peripherals && viewItem == stm8.field",
+          "group": "inline"
+        },
+        {
+          "command": "stm8.sfr.openRegister",
+          "when": "view == stm8Peripherals && viewItem =~ /^stm8\\.reg/",
+          "group": "inline@3"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "explorer",
+        "contents": "You have not opened a folder yet.\n[New STM8 Project](command:stm8.newProject)",
+        "when": "workbenchState == empty"
+      }
+    ]
+  }
+}

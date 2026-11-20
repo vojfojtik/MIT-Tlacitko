@@ -1,0 +1,439 @@
+SHELL := /bin/bash
+#MAKEFLAGS := --jobs=1
+# počet jader: nproc (Linux), sysctl (macOS nemá nproc), getconf
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+MAKEFLAGS := --jobs=$(shell n=$(NPROC); if [ "$$n" -gt 1 ]; then echo $$((n-1)); else echo 1; fi)
+MAKEFLAGS += --output-sync=target
+MAKEFLAGS += --load-average=$(NPROC)
+######################################################
+#         Makefile pro čísté SDCC
+######################################################
+#
+#### STM8 device LowerCase
+#
+#DEVICE_FLASH=stm8s003k3
+#DEVICE_FLASH=stm8s103f3
+#DEVICE_FLASH=stm8s105c6
+DEVICE_FLASH=stm8s208rb
+
+# Frekvence CPU v Hz. Výchozí: interní oscilátor HSI (HSI_VALUE z SPL) / HSI_DIV.
+# HSI_DIV musí odpovídat CLK_HSIPrescalerConfig() v init() (po resetu čipu je 8!).
+# Při použití vnějšího krystalu přepiš F_CPU ručně (např. F_CPU=8000000).
+HSI_DIV=1
+HSI_VALUE:=$(shell grep 'define[[:space:]]*HSI_VALUE' ../SPLSPL/inc/stm8s.h 2>/dev/null | grep -o '[0-9]\{4,\}' | head -1)
+ifeq ($(HSI_VALUE),)
+  HSI_VALUE=16000000
+endif
+# F_CPU se spočítá jednou (:=). Rekurzivní ?= by spustilo shell při každém použití,
+# tedy při každém překladu zvlášť (na Windows je start procesu drahý).
+ifeq ($(origin F_CPU),undefined)
+F_CPU := $(shell echo $$(( $(HSI_VALUE) / $(HSI_DIV) )))
+endif
+#F_CPU=8000000
+
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+################################# No #########################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+##############################################################################
+
+### STlink version for stm8flash target (stm8flash program)
+stlink_default_version=stlinkv21
+STLINK=$(shell bash .make/stlinkdetection.sh $(stlink_default_version))
+
+
+ifeq ($(OS),Windows_NT)
+  CC_ROOT = /c/Program Files/SDCC
+  PATH := $(CC_ROOT)/bin:$(PATH)
+  CC = /c/Program\\ Files/SDCC/bin/sdcc
+  AR = /c/Program\\ Files/SDCC/bin/sdar
+  
+  STVP_ROOT = "/c/Program Files (x86)/STMicroelectronics/st_toolset/stvp"
+else
+  #CC_ROOT = /usr
+  #CC_ROOT = /usr/local
+  CC_ROOT = /usr/local/stow/sdcc-X.X.X
+  #CC_ROOT = /usr/local/stow/sdcc-gas
+
+  CC = $(CC_ROOT)/bin/sdcc
+  AR = $(CC_ROOT)/bin/sdar
+  ifeq ($(wildcard $(CC)),)
+    CC = sdcc
+  endif
+  ifeq ($(wildcard $(AR)),)
+    AR = sdar
+  endif
+endif
+######################################################################################
+
+
+#DEVICE=STM8S103
+# :=, ne =. S rekurzivním = se bash spouští při každém použití $(DEVICE) (42x při načtení
+# Makefile), což je na Windows několik sekund.
+DEVICE:=$(shell bash .make/device $(DEVICE_FLASH))
+DEVICE_FLASH_STVP=$(shell bash .make/device_stvp $(DEVICE_FLASH))
+
+MKDIR = mkdir
+CP = cp
+
+# openocd --version se zeptá až při použití (flash, debug), ne při každém make
+interface = $(if $(findstring 2019,$(shell openocd --version 2>&1)),interface/stlink.cfg,interface/stlink-dap.cfg)
+ifeq ($(findstring 003, $(DEVICE)), 003)
+	target = target/stm8s003.cfg
+else ifeq ($(findstring 103, $(DEVICE)), 103)
+	target = target/stm8s103.cfg
+else ifeq ($(findstring 105, $(DEVICE)), 105)
+	target = target/stm8s105.cfg
+else
+	target = target/stm8s.cfg
+endif
+OPENOCD = openocd -f .make/stm8s-flash.cfg -f $(interface) -f $(target)
+
+# běží make debug? (PID gdb v .debug-session a proces žije)
+DEBUG_PID := $(if $(wildcard .debug-session),$(shell p=$$(cat .debug-session 2>/dev/null) && kill -0 $$p 2>/dev/null && echo $$p))
+
+
+ifeq ($(OS),Windows_NT)
+    uname_S := Windows
+
+	LN = cp
+	PYTHON = python
+	STVP = $(STVP_ROOT)/STVP_CmdLine.exe
+else
+    uname_S := $(shell uname -s)
+
+	LN = ln -sf
+	# první dostupný z python3 a python (macOS má jen python3, na Linuxu bývají oba)
+	PYTHON := $(or $(firstword $(foreach p,python3 python,$(if $(shell command -v $(p) 2>/dev/null),$(p)))),python3)
+endif
+
+# trap handling requires SDCC >=v3.4.3
+SKIP_TRAPS = 1
+
+# set compiler path & parameters 
+#CFLAGS  = -mstm8 -lstm8 --opt-code-size 
+CFLAGS  = -mstm8 -lstm8 --opt-code-size --nogcse --all-callee-saves --stack-auto --fverbose-asm --float-reent --no-peep
+#CFLAGS += --std-sdcc99 
+CFLAGS += --std-sdcc2x
+#CFLAGS += --disable-warning 283
+CFLAGS += -I inc
+CFLAGS += -D F_CPU=$(F_CPU)
+
+
+ifeq ($(IHEX_NODEBUG),)
+	FMT_ELF = --debug --out-fmt-elf
+endif
+
+# required for some examples for STM8S EVAL board
+#CFLAGS += -DUSE_STM8_128_EVAL
+
+# set output folder and target name
+OUTPUT_DIR = ./build-$(DEVICE)
+OUTPUT_DIR_ELF = ./build-$(DEVICE)-elf
+TARGET     = $(OUTPUT_DIR)/out.ihx
+TARGET_ELF     = $(OUTPUT_DIR_ELF)/out.elf
+OUTPUT_SPL_DIR = ../build_SPLlib.ihx-$(DEVICE)
+OUTPUT_SPL_DIR_ELF = ../build_SPLlib.elf-$(DEVICE)
+SPLLIB = ../SPLSPL/spl-$(DEVICE).ihx.lib
+SPLLIB_ELF = ../SPLSPL/spl-$(DEVICE).elf.lib
+
+# set project folder and files (all *.c)
+PRJ_ROOT    = .
+PRJ_SRC_DIR = $(PRJ_ROOT)/src
+PRJ_INC_DIR = $(PRJ_ROOT)/inc
+# all project sources included by default
+PRJ_SOURCE  = $(notdir $(wildcard $(PRJ_SRC_DIR)/*.c))
+PRJ_OBJECTS := $(addprefix $(OUTPUT_DIR)/, $(PRJ_SOURCE:.c=.rel))
+PRJ_OBJECTS_ELF := $(addprefix $(OUTPUT_DIR_ELF)/, $(PRJ_SOURCE:.c=.rel))
+PRJ_INCS  = $(wildcard $(PRJ_INC_DIR)/*.h)
+
+# set SPL paths
+SPL_SRC_DIR = ../SPLSPL/src/
+SPL_INC_DIR = ../SPLSPL/inc/
+#SPL_SRC_DIR = ../SPL-$(DEVICE)/src/
+#SPL_INC_DIR = ../SPL-$(DEVICE)/inc/
+# add all library sources used here singly ... or all .c files in SPL src dir
+#SPL_SOURCE  = stm8s_gpio.c stm8s_clk.c stm8s_tim4.c stm8s_itc.c 
+#SPL_SOURCE += stm8s_uart1.c
+#SPL_SOURCE += stm8s_adc2.c
+#SPL_SOURCE += stm8s_flash.c
+#SPL_SOURCE += stm8s_tim1.c
+#SPL_SOURCE += stm8s_tim2.c
+#SPL_SOURCE += stm8s_tim3.c
+#SPL_SOURCE  = $(notdir $(wildcard $(SPL_SRC_DIR)/*.c))
+ifneq ($(wildcard ../SPLSPL),)
+	include ../SPLSPL/mk/$(DEVICE).mk  # zde se definuje proměnná $(SPL_SOURCE_PREFIX)
+else
+start: spl
+endif
+
+SPL_SOURCE = $(foreach prefix, $(SPL_SOURCE_PREFIX), $(notdir $(wildcard $(SPL_SRC_DIR)/$(prefix)*.c)))
+SPL_OBJECTS := $(addprefix $(OUTPUT_SPL_DIR)/, $(SPL_SOURCE:.c=.rel))
+SPL_OBJECTS_ELF := $(addprefix $(OUTPUT_SPL_DIR_ELF)/, $(SPL_SOURCE:.c=.rel))
+
+# collect all include folders
+INCLUDE = -I$(PRJ_INC_DIR) -I$(SPL_INC_DIR) 
+
+# collect all source directories
+# VPATH is intentionally disabled: explicit source paths in pattern rules make it
+# redundant and prevent accidental shadowing by same-named files in the project root.
+# VPATH=$(PRJ_SRC_DIR):$(SPL_SRC_DIR)
+
+.PHONY: ihx elf all
+.DELETE_ON_ERROR:
+
+ihx: compile_commands.json  $(TARGET)
+elf: compile_commands.json  $(TARGET_ELF)
+all: ihx elf
+
+$(TARGET_ELF): $(PRJ_OBJECTS_ELF)  $(SPLLIB_ELF)
+	$(CC) $(CFLAGS) $(FMT_ELF) -o $(TARGET_ELF) $^ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+	$(LN) $@ ./out.elf || $(CP) $@ ./out.elf
+
+$(TARGET): $(PRJ_OBJECTS)  $(SPLLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) $^ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+	$(LN) $@ ./out.ihx || $(CP) $@ ./out.ihx
+	@echo
+	@$(PYTHON) .make/sizecal.py ./out.ihx
+	@echo
+
+$(OUTPUT_DIR)/%.rel: $(PRJ_SRC_DIR)/%.c $(PRJ_INCS) Makefile | $(OUTPUT_DIR) ../SPLSPL
+	$(CC) $(CFLAGS) -D$(DEVICE) $(INCLUDE) -DSKIP_TRAPS=$(SKIP_TRAPS) -c $< -o $@ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+$(OUTPUT_DIR_ELF)/%.rel: $(PRJ_SRC_DIR)/%.c $(PRJ_INCS) Makefile | $(OUTPUT_DIR_ELF) ../SPLSPL
+	$(CC) $(CFLAGS) $(FMT_ELF) -D$(DEVICE) $(INCLUDE) -DSKIP_TRAPS=$(SKIP_TRAPS) -c $< -o $@ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+
+$(OUTPUT_SPL_DIR)/%.rel: $(SPL_SRC_DIR)/%.c $(PRJ_INCS)  | $(OUTPUT_SPL_DIR) ../SPLSPL
+	$(CC) $(CFLAGS) -D$(DEVICE) $(INCLUDE) -DSKIP_TRAPS=$(SKIP_TRAPS) -c $< -o $@ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+$(OUTPUT_SPL_DIR_ELF)/%.rel: $(SPL_SRC_DIR)/%.c $(PRJ_INCS)  | $(OUTPUT_SPL_DIR_ELF) ../SPLSPL
+	$(CC) $(CFLAGS) $(FMT_ELF) -D$(DEVICE) $(INCLUDE) -DSKIP_TRAPS=$(SKIP_TRAPS) -c $< -o $@ 2>&1 | $(PYTHON) .make/recolor.py; exit $${PIPESTATUS[0]}
+
+
+# Check if the SPL library was built with a different SDCC version.
+# Evaluated at parse time so cleanup happens before the ifeq below,
+# guaranteeing automatic recompilation when the compiler version changes.
+HASH             := \#
+SDCC_VERSION     := $(shell $(CC) --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+ $(HASH)[0-9]+' | head -1)
+SPLLIB_VER_STAMP := $(SPLLIB).sdcc_ver
+ifneq ($(wildcard $(SPLLIB_VER_STAMP)),)
+  SPLLIB_BUILT_VER := $(shell cat $(SPLLIB_VER_STAMP))
+  ifneq ($(SPLLIB_BUILT_VER),$(SDCC_VERSION))
+    $(info *** SPL library was built with a different SDCC version:)
+    $(info ***   stored  : $(SPLLIB_BUILT_VER))
+    $(info ***   current : $(SDCC_VERSION))
+    $(info *** Removing build artifacts — everything will be recompiled.)
+    $(shell rm -rf "$(OUTPUT_DIR)" "$(OUTPUT_DIR_ELF)")
+    $(shell rm -rf "$(OUTPUT_SPL_DIR)" "$(OUTPUT_SPL_DIR_ELF)")
+    $(shell rm -f  "$(SPLLIB)" "$(SPLLIB_ELF)" "$(SPLLIB_VER_STAMP)")
+  endif
+endif
+
+ifeq ($(wildcard $(SPLLIB)),)
+$(SPLLIB): $(SPL_OBJECTS) | $(OUTPUT_SPL_DIR)
+	@rm -f objects.list
+	@echo -n "Procesing: "
+	@for prefix in $(SPL_SOURCE_PREFIX); do \
+         echo -n "$$prefix "; \
+         ls $(OUTPUT_SPL_DIR)/$$prefix*.rel >> objects.list; \
+    done;
+	@echo -e "\nCreating library $(SPLLIB)"
+	$(AR) -rc $(SPLLIB) @objects.list
+	$(CC) --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+ $(HASH)[0-9]+' | head -1 > $(SPLLIB_VER_STAMP)
+	@rm -f objects.list
+endif
+
+ifeq ($(wildcard $(SPLLIB_ELF)),)
+$(SPLLIB_ELF): $(SPL_OBJECTS_ELF) | $(OUTPUT_SPL_DIR_ELF)
+	@rm -f objects.list
+	@for prefix in $(SPL_SOURCE_PREFIX); do \
+         ls $(OUTPUT_SPL_DIR_ELF)/$$prefix*.rel >> objects.list; \
+    done;
+	$(AR) -rc $(SPLLIB_ELF) @objects.list
+	@rm -f objects.list
+endif
+
+
+$(OUTPUT_DIR):
+	$(MKDIR) -p $(OUTPUT_DIR)
+$(OUTPUT_DIR_ELF):
+	$(MKDIR) -p $(OUTPUT_DIR_ELF)
+$(OUTPUT_SPL_DIR):
+	$(MKDIR) -p $@
+$(OUTPUT_SPL_DIR_ELF):
+	$(MKDIR) -p $@
+
+
+compile_commands.json: $(SPL_SRC_DIR) $(PRJ_SRC_DIR)  Makefile
+	$(PYTHON) .make/compile_database_generator.py $(DEVICE) $(CC_ROOT)
+
+.PHONY: clean clean-spl-objects clean-spl-lib  cleanall
+
+clean:
+	rm -f ./out.ihx
+	rm -f ./out.elf
+	rm -f out-$(DEVICE).ihex
+	rm -Rf $(OUTPUT_DIR)
+	rm -Rf $(OUTPUT_DIR_ELF)
+	rm -f compile_commands.json
+
+clean-spl: clean-spl-lib
+
+clean-spl-objects:
+	rm -Rf $(OUTPUT_SPL_DIR)
+	rm -Rf $(OUTPUT_SPL_DIR_ELF)
+
+clean-spl-lib: clean-spl-objects
+	rm -f $(SPLLIB)
+	rm -f $(SPLLIB_ELF)
+	rm -f $(SPLLIB_VER_STAMP)
+
+cleanall: clean-spl-lib clean 
+
+
+.PHONY: flash flash-elf flash-ihex stm8flash rebuild reflash
+
+# Windows: STVP, když je nainstalované, jinak OpenOCD (jako na Linuxu a macOS)
+# za běhu make debug jen přeloží ELF, do čipu ho nahraje debugger (ST-Link drží on)
+flash: $(if $(DEBUG_PID),elf,$(TARGET))
+ifneq ($(DEBUG_PID),)
+	@printf "\033[1;33m*** make debug is running – the debugger flashes the new program to the chip.\033[0m\n"
+else ifeq ($(OS),Windows_NT)
+	+if [ -f $(STVP) ]; then \
+		$(STVP) -BoardName=ST-LINK -Device=$(DEVICE_FLASH_STVP) -Port=USB -ProgMode=SWIM -no_loop -no_log -FileProg=$(TARGET); \
+	else \
+		$(OPENOCD) -c "init" -c "program_device $(TARGET) 0"; \
+	fi
+else
+	+$(OPENOCD) -c "init" -c "program_device $(TARGET) 0"
+endif
+
+flash-elf: $(TARGET_ELF)
+	+$(OPENOCD) -c "init" -c "program_device $(TARGET_ELF) 0"
+flash-ihex: $(TARGET_ELF)
+	stm8-objcopy -O ihex $(TARGET_ELF) out-$(DEVICE).ihex
+	@echo
+	@$(PYTHON) .make/sizecal.py ./out-$(DEVICE).ihex
+	@echo
+	+$(OPENOCD) -c "init" -c "program_device out-$(DEVICE).ihex 0"
+
+
+
+# echo "00 00 ff 00 ff 00 ff 00 ff 00 ff" | xxd -r -p > .make/rop.bin
+stm8flash-unlock:
+	+stm8flash -c $(STLINK) -p $(DEVICE_FLASH) -s opt -w .make/rop.bin
+
+
+stm8flash: $(TARGET)
+	+stm8flash -c $(STLINK) -p $(DEVICE_FLASH) -s flash -w out.ihx
+
+rebuild: clean
+	$(MAKE) elf
+
+reflash: clean
+	$(MAKE) flash
+
+
+.PHONY: debug openocd gdb cgdb pyserial miniterm baudrate
+
+# OpenOCD spouští gdb sám (viz .make/stm8gdb.py); make openocd jen pro ruční připojení na :3333
+openocd:
+	+$(OPENOCD) -c "init" -c "reset halt"
+
+# registry periferií pro gdb (p TIM4->CR1, příkaz sfr): symboly a masky ze stm8s.h
+SFR_ELF = $(OUTPUT_DIR_ELF)/sfr.elf
+$(SFR_ELF): $(SPL_INC_DIR)/stm8s.h .make/sfr_gen.py Makefile | $(OUTPUT_DIR_ELF) ../SPLSPL
+	@$(PYTHON) .make/sfr_gen.py --cc "$(CC)" --objcopy stm8-objcopy -o $@ \
+		--cflags "$(filter -mstm8 --std-%,$(CFLAGS)) -D$(DEVICE) $(INCLUDE)"
+
+GDB_ENV = STM8_OPENOCD='$(OPENOCD)' STM8_OPENOCD_LOG=$(OUTPUT_DIR_ELF)/openocd.log \
+	STM8_SFR=$(SFR_ELF)
+
+# Windows, Git Bash (mintty): nativní stm8-gdb dostane místo terminálu rouru a TUI hlásí
+# "Cannot enable the TUI when output is not a terminal". winpty (je v Git for Windows) mu
+# terminál dodá; pozná se podle /dev/pty*. V PowerShellu, cmd a Windows Terminalu (/dev/cons*)
+# a na Linuxu a macOS se nic nepřidává.
+ifeq ($(OS),Windows_NT)
+  WINPTY = $$(case "$$(tty 2>/dev/null)" in /dev/pty*) command -v winpty;; esac)
+else
+  WINPTY =
+endif
+
+# ladění jedním příkazem: přeloží, nahraje, zastaví na main(); bez cgdb gdb TUI
+debug cgdb: $(TARGET_ELF) $(SFR_ELF)
+ifneq ($(shell command -v cgdb),)
+	+$(GDB_ENV) STM8_UI=cgdb CGDB_DIR=.make/cgdb cgdb -d stm8-gdb -- -q -x .make/gdbinit $(TARGET_ELF)
+else
+	+$(GDB_ENV) STM8_UI=tui $(WINPTY) stm8-gdb -q --tui -x .make/gdbinit -ex 'focus cmd' $(TARGET_ELF)
+endif
+
+gdb: $(TARGET_ELF) $(SFR_ELF)
+	+$(GDB_ENV) STM8_UI=tui $(WINPTY) stm8-gdb -q --tui -x .make/gdbinit -ex 'focus cmd' $(TARGET_ELF)
+
+# sériový terminál na prvním USB-serial portu; rychlost se zjistí z projektu
+# (UARTx_Init nebo zápis do BRR registrů), ručně: make miniterm BAUD=9600
+BAUDRATE_DETECT = $(PYTHON) .make/baudrate.py --cc $(CC) --fcpu $(F_CPU) \
+	--asm $(OUTPUT_DIR) --inc $(PRJ_INC_DIR) \
+	--cpp "$(filter -mstm8 --std-%,$(CFLAGS)) -DF_CPU=$(F_CPU) -D$(DEVICE) $(INCLUDE)" \
+	$(wildcard $(PRJ_SRC_DIR)/*.c)
+
+pyserial miniterm: $(TARGET)
+	+@PYTHON=$(PYTHON) bash .make/pyserial.auto $(or $(BAUD),$$($(BAUDRATE_DETECT)))
+
+baudrate:
+	@$(BAUDRATE_DETECT)
+
+switch-device: clean
+	+PYTHON=$(PYTHON) bash .make/switch_device.sh $(CHIP)
+
+SPL_GIT ?= https://gitlab.com/spseol/mit-no/spl.git
+# git clone: anonymní Git přes HTTPS GitLab nepočítá do limitu 60 požadavků/h na IP (curl archivu ano).
+# Receptem chybějící složku doplní obě (SPL i SPLSPL); druhé pravidlo pak nemá co dělat.
+define spl_fetch
+	@if [ ! -d $@ ]; then \
+		rm -rf ../.spl-clone && \
+		git clone --depth 1 --quiet $(SPL_GIT) ../.spl-clone && \
+		for d in SPL SPLSPL; do [ -d ../$$d ] || mv ../.spl-clone/$$d ..; done && \
+		rm -rf ../.spl-clone && \
+		printf "***********************************************************\n*  SPL was downloaded. You may need to run make again.    *\n***********************************************************\n"; \
+	fi
+endef
+../SPL:
+	$(spl_fetch)
+../SPLSPL: | ../SPL
+	$(spl_fetch)
+$(SPL_SRC_DIR): | ../SPL ../SPLSPL
+
+.PHONY: spl spl-renew tree lib
+
+spl: ../SPL ../SPLSPL
+
+spl-renew:
+	rm -Rf ../SPL* 
+	$(MAKE) spl
+
+tree:
+	+bash .make/tree.sh
+
+docs-download:
+	+bash .make/docs-download.sh $(DEVICE)
+
+lib:
+	@bash .make/lib-mv.sh
+
+# VS Code extension: dap-info, debug-files (see .make/vscode/)
+-include .make/vscode.mk

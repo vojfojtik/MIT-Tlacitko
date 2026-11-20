@@ -1,0 +1,40 @@
+# Konfigurace gdb pro ladění STM8.
+# Načítá ji `make debug` (cgdb) a `make gdb` (TUI) přes `-x .make/gdbinit`,
+# takže nevadí auto-load safe-path (lokální .gdbinit by gdb odmítl).
+
+# Bez LANG (locale C: env -i, některé programy spuštěné z GUI na macOS) by gdb
+# kódoval texty ze skriptů níže (…, –, ─, →) do ASCII a stm8gdb.py by spadl na
+# UnicodeEncodeError. Musí být před `source`.
+set host-charset UTF-8
+
+set style enabled on
+set print pretty on
+set print array-indexes on
+# u adres dat by gdb kvůli DWARF ze SDCC hlásil „Internal error: pc … in read in CU“
+set print symbol off
+set pagination off
+set confirm off
+
+set history save on
+set history filename ~/.gdb_history_stm8
+set history size 10000
+
+define regs
+  info registers
+end
+document regs
+Print the CPU registers.
+end
+
+define bm
+  break main
+end
+document bm
+Set a breakpoint at main().
+end
+
+# příkazy flash, reset, run/start, vars; připojení přes OpenOCD; hlídání ELF
+source .make/stm8gdb.py
+# registry periferií: p TIM4->CR1, masky ze stm8s.h, příkaz sfr
+source .make/stm8sfr.py
+python stm8_start()

@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "STM8 debug",
+            "type": "stm8",
+            "request": "launch",
+            "preLaunchTask": "stm8: build"
+        }
+    ]
+}
