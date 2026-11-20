@@ -13,6 +13,8 @@
 
 1. ono se to
 2. samo se to
+3. tak se to
+4. mozna se to
 
 ## ToDo
 
